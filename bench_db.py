@@ -36,13 +36,52 @@ def local_multi_write_func(datas):
         with open('%s/%.8d' % (temp_dir, num), 'w') as fp:
             fp.write(data)
     datas_len = len(datas)
-    
+
     def multi_read_func():
         return [open('%s/%.8d' % (temp_dir, num)).read() for num in range(datas_len)]
 
     def multi_delete_func():
         import shutil
         shutil.rmtree(temp_dir)
+
+    return multi_read_func, multi_delete_func
+
+
+def couchdb_multi_write_func(datas):
+    import requests
+    import json
+    from couch import user, pw
+    baseurl = 'localhost:5984'
+
+    # FIXME auth problems
+    def couchdb(method, tag, data=None):
+        m = {'PUT':requests.put, 'GET':requests.get,
+             'POST':requests.post, 'DELETE':requests.delete}
+        m = m[method]
+        if data is not None:
+            url = 'http://%s/%s/data.bin' % (baseurl, tag)
+            r = m(url, auth=(user,pw), data=data,
+                  headers={'Content-Type':'application/octet-stream'})
+        else:
+            url = 'http://%s/%s' % (baseurl, tag)
+            r = m(url, auth=(user,pw))
+        if tag.endswith('.bin') and method=='GET':
+            return r.content
+        else:
+            return json.loads(r.content)
+
+    k = ('bench_db-%f' % np.random.random()).replace('.', '')
+    couchdb('PUT', k)
+    for x, y in enumerate(datas):
+        couchdb('PUT', "%s/%s" % (k, x), y)
+    datas_len = len(datas)
+
+    def multi_read_func():
+        data = [couchdb('GET', "%s/%s/data.bin" % (k, x)) for x in range(datas_len)]
+        return data
+
+    def multi_delete_func():
+        couchdb('DELETE', k)
 
     return multi_read_func, multi_delete_func
 
@@ -66,12 +105,12 @@ def cass_multi_write_func(datas):
 
 def format_table(table_name, times):
     times_sorted = sorted(times)
-    
+
     def mk_size(x):
         s = '%.0e' % x
         return ['$10^%s$' % int(s[3:])]
     table_body = '\n'.join([r'%s\\ \hline' % ('&'.join(mk_size(t) + ['%.5f' % x for x in times[t]])) for t in times_sorted])
-    
+
     table = r"""\documentclass[11pt]{article}
     \usepackage{fullpage}
 
@@ -86,7 +125,6 @@ def format_table(table_name, times):
     \end{document}""" % (table_name, table_body)
     return table
 
-
 latex_out = format_table('Cassandra', gauntlet(cass_multi_write_func, [10 ** x for x in range(0, 7)], 10))
 print(latex_out)
 with open('cass.tex', 'w') as fp:
@@ -95,4 +133,9 @@ with open('cass.tex', 'w') as fp:
 latex_out = format_table('Local Disk', gauntlet(local_multi_write_func, [10 ** x for x in range(0, 7)], 10))
 print(latex_out)
 with open('local.tex', 'w') as fp:
+    fp.write(latex_out)
+
+latex_out = format_table('CouchDB', gauntlet(couchdb_multi_write_func, [10 ** x for x in range(0, 7)], 10))
+print(latex_out)
+with open('couchdb.tex', 'w') as fp:
     fp.write(latex_out)
